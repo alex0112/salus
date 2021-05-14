@@ -27,6 +27,9 @@ module Salus
       # Rust
       { handle: :cargo, filename: 'Cargo.toml' },
       { handle: :cargo_lock, filename: 'Cargo.lock' },
+      # Elixir
+      { handle: :mix_file, filename: 'mix.exs' },
+      { handle: :mix_lock_file, filename: 'mix.lock' },
       # Mobile Scanners
       { handle: :android_app, filename: '.apk', wildcard: true },
       { handle: :ios_app, filename: '.ipa', wildcard: true }
