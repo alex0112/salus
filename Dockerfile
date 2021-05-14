@@ -44,6 +44,12 @@ RUN curl -fsSL "$RUST_DOWNLOAD_URL" -o rust.tar.gz \
   && cargo install cargo-audit --version "$CARGO_AUDIT_VERSION"
 
 
+### Elixir
+RUN apt-get update \
+    && apt-get -y install erlang elixir \
+    && mix local.hex --force \
+    && mix archive.install hex sobelow
+
 ### Python
 # Install bandit, python static code scanner
 ENV BANDIT_VERSION 1.6.2
