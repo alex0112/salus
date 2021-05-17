@@ -159,9 +159,6 @@ RUN curl -fsSL "$NODE_DOWNLOAD_URL" -o node.tar.gz \
   && yarn install \
   && rm -rf /node.tar.gz package.json yarn.lock /tmp/* ~/.npm
 
-### Elixir
-RUN mix local.hex --force \
-    && mix archive.install hex sobelow
 
 ### All other tools
 ENV PIP_VERSION 18.1
@@ -180,6 +177,10 @@ RUN ln -sf /usr/local/go/bin/go /usr/local/bin
 RUN python -m easy_install pip==${PIP_VERSION} \
   && python3 -m easy_install pip==${PIP_VERSION}
 
+
+### Elixir
+RUN mix local.hex --force \
+    && mix archive.install hex sobelow
 
 ### Salus
 WORKDIR /home
