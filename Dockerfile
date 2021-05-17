@@ -22,7 +22,9 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get inst
   libicu-dev \
   cmake \
   pkg-config \
-  wget
+  wget \
+  elixir \
+  erlang
 
 WORKDIR /root
 
@@ -45,10 +47,17 @@ RUN curl -fsSL "$RUST_DOWNLOAD_URL" -o rust.tar.gz \
 
 
 ### Elixir
-RUN apt-get update \
-    && apt-get -y install erlang elixir \
-    && mix local.hex --force \
-    && mix archive.install hex sobelow
+# Install sobelow for static analysis of elixir/phoenix projects
+# RUN apt-get update \
+#     && apt-get -y install erlang elixir \
+#     && mix local.hex --force \
+#     && mix archive.install hex sobelow
+
+# RUN mix local.hex --force \
+#     && mix archive.install hex sobelow
+
+# COPY --from=builder /usr/bin/elixir /usr/local/bin/elixir
+# COPY --from=builder /usr/bin/mix /usr/local/bin/mi
 
 ### Python
 # Install bandit, python static code scanner
@@ -150,6 +159,9 @@ RUN curl -fsSL "$NODE_DOWNLOAD_URL" -o node.tar.gz \
   && yarn install \
   && rm -rf /node.tar.gz package.json yarn.lock /tmp/* ~/.npm
 
+### Elixir
+RUN mix local.hex --force \
+    && mix archive.install hex sobelow
 
 ### All other tools
 ENV PIP_VERSION 18.1
@@ -160,6 +172,10 @@ COPY --from=builder /root/vendor /home/vendor
 COPY --from=builder /root/.local /root/.local
 COPY --from=builder /root/.cargo /root/.cargo
 COPY --from=builder /usr/local/go /usr/local/go
+COPY --from=builder /usr/local/bin/mix /usr/local/mix
+COPY --from=builder /usr/bin/erl /usr/local/bin/erl
+COPY --from=builder /usr/bin/elixir /usr/local/bin/elixir
+COPY --from=builder /usr/bin/mix /usr/local/bin/mix
 RUN ln -sf /usr/local/go/bin/go /usr/local/bin
 RUN python -m easy_install pip==${PIP_VERSION} \
   && python3 -m easy_install pip==${PIP_VERSION}
