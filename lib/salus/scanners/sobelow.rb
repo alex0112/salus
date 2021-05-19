@@ -6,7 +6,7 @@ module Salus::Scanners
   class Sobelow < Base
 
     def version
-      return ''
+      return '0.11.1' ## TODO: Currently sobelow does not support a --version flag, get this info somehow
     end
 
     def should_run?
@@ -14,15 +14,17 @@ module Salus::Scanners
     end
 
     def run
-      p "GOT TO RUN (IN SOBELOW)"
-      return report_success
-      #Dir.chdir(@repository.path_to_repo) do
-        #   shell_return = run_shell("mix sobelow")
-        #   p shell_return
-        #   report_error(shell_return.stderr) unless shell_return.success?
+      Dir.chdir(@repository.path_to_repo) do
+        shell_return = run_shell("mix sobelow -i Config.HTTPS --threshold medium --skip --private")
         
-        #   return report_success if shell_return.success? && !has_vulnerabilities?(shell_return.stdout)
-      #end
+        if shell_return.success?
+          report_success
+        else
+          report_error(shell_return.stderr)
+        end
+
+      end
+
     end
 
   end
