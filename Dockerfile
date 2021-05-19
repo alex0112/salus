@@ -145,11 +145,15 @@ RUN curl -fsSL "$NODE_DOWNLOAD_URL" -o node.tar.gz \
   && rm -rf /node.tar.gz package.json yarn.lock /tmp/* ~/.npm
 
 ### Elixir + Sobelow
-RUN apt-get update && apt-get upgrade -y --no-install-recommends && apt-get install -y --no-install-recommends \
-    erlang \
-    elixir \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget gnupg gnupg1 gnupg2 \
+    && wget https://packages.erlang-solutions.com/erlang-solutions_1.0_all.deb \
+    && dpkg -i erlang-solutions_1.0_all.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends esl-erlang elixir \
+    && apt-get upgrade elixir \
     && mix local.hex --force \
-    && mix archive.install hex sobelow
+    && mix archive.install hex sobelow --force
 
 
 ### All other tools
