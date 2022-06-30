@@ -1,5 +1,6 @@
 require 'safe_yaml'
 require 'set'
+require 'merge_util'
 
 module Salus
   class Config
@@ -10,21 +11,37 @@ module Salus
     # The URI format can help security teams update enforced scans or the latest
     # configuration in a centralized manner across all services in their organization.
 
+    include Salus::SalusBugsnag
+
     attr_reader :project_name,
                 :custom_info,
                 :report_uris,
                 :builds,
-                :active_scanners,
                 :enforced_scanners,
                 :scanner_configs
 
-    # Dynamically get all Scanner classes
-    ABSTRACT_SCANNERS = %i[Base NodeAudit].freeze
-    SCANNERS = Salus::Scanners.constants
+    attr_accessor :active_scanners
+
+    ABSTRACT_SCANNERS = %i[Base NodeAudit LanguageVersion PackageVersion OSV].freeze
+
+    PACKAGE_VERSION_SCANNERS = Salus::Scanners::PackageVersion.constants
+      .reject { |klass| ABSTRACT_SCANNERS.include?(klass) }
+      .map { |klass| [klass.to_s, Salus::Scanners::PackageVersion.const_get(klass)] }
+    # Dynamically get all Scanners for language version checking
+    LANGUAGE_VERSION_SCANNERS = Salus::Scanners::LanguageVersion.constants
+      .reject { |klass| ABSTRACT_SCANNERS.include?(klass) }
+      .map { |klass| [klass.to_s, Salus::Scanners::LanguageVersion.const_get(klass)] }
+    OSV_SCANNERS = Salus::Scanners::OSV.constants
+      .reject { |klass| ABSTRACT_SCANNERS.include?(klass) }
+      .map { |klass| [klass.to_s, Salus::Scanners::OSV.const_get(klass)] }
+
+    # Dynamically get all other Scanner classes
+    OTHER_SCANNERS = Salus::Scanners.constants
       .reject { |klass| ABSTRACT_SCANNERS.include?(klass) }
       .map { |klass| [klass.to_s, Salus::Scanners.const_get(klass)] }
-      .sort
-      .to_h
+
+    SCANNERS = (OSV_SCANNERS + PACKAGE_VERSION_SCANNERS +
+      LANGUAGE_VERSION_SCANNERS + OTHER_SCANNERS).sort.to_h
       .freeze
 
     # This is the base configuration file, and we merge all other configuration
@@ -35,7 +52,8 @@ module Salus
     ).freeze
 
     DEFAULT_SCANNER_CONFIG = {
-      'pass_on_raise' => false # strong default - if a scanner raises, it counts as failure.
+      'pass_on_raise' => false, # strong default - if a scanner raises, it counts as failure.
+      'scanner_timeout_s' => 0 # Scanner can run indefinitely if a max lifespan isn't provided
     }.freeze
 
     LOCAL_FILE_SCHEME_REGEX = /\Afile\z/.freeze # like file://foobar
@@ -48,15 +66,25 @@ module Salus
       # defined in the earlier files in the array (DEFAULT_CONFIG is the first such file/object).
       final_config = DEFAULT_CONFIG.dup
       configuration_files.each do |file|
-        filtered_data = filter_ignored_ids(YAML.safe_load(file), ignore_ids)
-        final_config.deep_merge!(filtered_data)
+        file_content = YAML.safe_load(file)
+        if file_content.is_a?(Hash)
+          filtered_data = filter_ignored_ids(file_content, ignore_ids)
+        else
+          msg = "file_content #{file_content.inspect} is not a hash"
+          bugsnag_notify(msg)
+          filtered_data = {}
+        end
+        combine_arrays = filtered_data.dig('cascade_config', 'combine_arrays') || false
+        final_config = MergeUtil.deep_merge(final_config, filtered_data, combine_arrays)
       end
 
       # Check if any of the values are actually pointing to envars.
       final_config = fetch_envars(final_config)
 
+      # Apply any config filters the user has defined
+      final_config = apply_config_filters(final_config)
       # Parse and store configuration.
-      @active_scanners   = all_none_some(SCANNERS.keys, final_config['active_scanners'])
+      @active_scanners = all_none_some(SCANNERS.keys, final_config['active_scanners'])
       @enforced_scanners = all_none_some(SCANNERS.keys, final_config['enforced_scanners'])
       @scanner_configs   = final_config['scanner_configs'] || {}
       @project_name      = final_config['project_name']&.to_s
@@ -71,6 +99,16 @@ module Salus
 
       apply_default_scanner_config!
       apply_node_audit_patch!
+    end
+
+    # Syntatical sugar to apply salus config filters
+    def apply_config_filters(config_hash)
+      Salus::PluginManager.apply_filter(:salus_config, :filter_config, config_hash)
+    end
+
+    # Syntatical sugar register salus_config filters
+    def self.register_filter(filter)
+      Salus::PluginManager.register_filter(:salus_config, filter)
     end
 
     def valid_name?(name)
@@ -123,8 +161,11 @@ module Salus
 
       # Make a fully merged config hash for NodeAudit.
       @scanner_configs['NodeAudit'] ||= {}
-      @scanner_configs['NodeAudit'].deep_merge!(@scanner_configs['NPMAudit'] || {})
-      @scanner_configs['NodeAudit'].deep_merge!(@scanner_configs['YarnAudit'] || {})
+
+      @scanner_configs['NodeAudit'] = MergeUtil.deep_merge(@scanner_configs['NodeAudit'],
+                                                           @scanner_configs['NPMAudit'], true)
+      @scanner_configs['NodeAudit'] = MergeUtil.deep_merge(@scanner_configs['NodeAudit'],
+                                                           @scanner_configs['YarnAudit'], true)
 
       # Copy over the config to the relevant scanners to ensure they all inherit it.
       @scanner_configs['NPMAudit'] = @scanner_configs['NodeAudit']
@@ -135,9 +176,11 @@ module Salus
     def apply_default_scanner_config!
       SCANNERS.each_key do |scanner|
         @scanner_configs[scanner] ||= {}
-        @scanner_configs[scanner] = DEFAULT_SCANNER_CONFIG
-          .dup
-          .deep_merge!(@scanner_configs[scanner])
+        if @scanner_configs[scanner].is_a? Array
+          bugsnag_notify("@scanner_configs[scanner] is Array: #{@scanner_configs[scanner].inspect}")
+        end
+        @scanner_configs[scanner] = MergeUtil.deep_merge(DEFAULT_SCANNER_CONFIG,
+                                                         @scanner_configs[scanner])
       end
     end
 
@@ -147,7 +190,7 @@ module Salus
       # Get the configuration back into string format
       config_string = YAML.dump(config_hash)
 
-      # Check for references to evnars.
+      # Check for references to envars.
       envar_refs = config_string.scan(/\{\{([_a-zA-Z0-9]+)\}\}/).flatten
 
       # Replace all references to envars.

@@ -4,8 +4,8 @@ module Sarif
 
     CARGO_AUDIT_URI = 'https://github.com/RustSec/cargo-audit/'.freeze
 
-    def initialize(scan_report)
-      super(scan_report)
+    def initialize(scan_report, repo_path = nil)
+      super(scan_report, {}, repo_path)
       @uri = CARGO_AUDIT_URI
       @logs = parse_scan_report!
     end
@@ -50,9 +50,14 @@ module Sarif
         id: advisory['id'],
         name: advisory['title'],
         level: "HIGH",
-        details: "Package: #{advisory['package']}\nTitle: #{advisory['title']}\nDescription: "\
-        "#{advisory['description']}\nPatched: #{issue.dig('versions', 'patched')}"\
-        "\nUnaffected: #{issue.dig('versions', 'unaffected')}\nCVSS: #{advisory['cvss']}",
+        details: (advisory['description']).to_s,
+        messageStrings: { "package": { "text": (advisory['package']).to_s },
+                         "title": { "text": (advisory['title']).to_s },
+                         "severity": { "text": (advisory['cvss']).to_s },
+                         "patched_versions": { "text": issue.dig('versions', 'patched').to_s },
+                         "unaffected_versions": { "text": issue.dig('versions',
+                                                                    'unaffected').to_s } },
+        properties: { 'severity': (advisory['cvss']).to_s },
         uri: 'Cargo.lock',
         help_url: issue['advisory']['url']
       }

@@ -1,5 +1,5 @@
 {
-  "version": "2.11.6",
+  "version": "2.20.0",
   "passed": true,
   "running_time": 0.0,
   "scans": {
@@ -37,7 +37,7 @@
     },
     "Semgrep": {
       "scanner_name": "Semgrep",
-      "version": "0.36.0",
+      "version": "0.62.0",
       "passed": true,
       "running_time": 0.0,
       "warn": {
@@ -64,15 +64,28 @@
       "Brakeman",
       "BundleAudit",
       "CargoAudit",
+      "GoOSV",
+      "GoPackageScanner",
+      "GoVersionScanner",
       "Gosec",
+      "GradleOSV",
+      "MavenOSV",
       "NPMAudit",
+      "NPMPackageScanner",
       "PatternSearch",
+      "PythonOSV",
       "RepoNotEmpty",
       "ReportGoDep",
+      "ReportGradleDeps",
       "ReportNodeModules",
+      "ReportPodfileLock",
+      "ReportPomXml",
       "ReportPythonModules",
       "ReportRubyGems",
       "ReportRustCrates",
+      "ReportSwiftDeps",
+      "RubyPackageScanner",
+      "RubyVersionScanner",
       "Semgrep",
       "YarnAudit"
     ],
@@ -89,52 +102,120 @@
     ],
     "scanner_configs": {
       "Bandit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "Brakeman": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "BundleAudit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "CargoAudit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "GoOSV": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "GoPackageScanner": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "Gosec": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "GradleOSV": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "MavenOSV": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "NPMAudit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "NPMPackageScanner": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "PatternSearch": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "PythonOSV": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "RepoNotEmpty": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "ReportGoDep": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "ReportGradleDeps": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "ReportNodeModules": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "ReportPodfileLock": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "ReportPomXml": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "ReportPythonModules": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "ReportRubyGems": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "ReportRustCrates": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "ReportSwiftDeps": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "Semgrep": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "YarnAudit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "GoVersionScanner": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "RubyPackageScanner": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
+      "RubyVersionScanner": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       },
       "NodeAudit": {
-        "pass_on_raise": false
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
       }
     },
     "report_uris": [

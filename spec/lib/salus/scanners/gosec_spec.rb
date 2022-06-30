@@ -77,6 +77,36 @@ describe Salus::Scanners::Gosec do
     end
   end
 
+  describe '#run from multiple subdirs' do
+    context 'go project with multiple sub-projects' do
+      let(:repo) { 'spec/fixtures/gosec/multi_goapps' }
+
+      it 'should report failures in both sub-projects' do
+        # test case shows gosec only runs from the specified subdirs in salus.yaml
+        # there are 3 identical subdirs in the repo: app1, app2, app3, all with vulns
+        # salus.yaml says run_from_dirs = [app1, app2]
+        # so result vulns are reported for app1 and app2 only, not app3
+        config_file = "#{repo}/salus.yaml"
+        configs = Salus::Config.new([File.read(config_file)]).scanner_configs['Gosec']
+        scanner = Salus::Scanners::Gosec.new(repository: Salus::Repo.new(repo), config: configs)
+        scanner.run
+
+        expect(scanner.report.passed?).to eq(false)
+
+        logs = JSON.parse(scanner.report.to_h[:logs])
+        issues_arr = logs['Issues']
+        golang_errs = logs['Golang errors']
+
+        expect(issues_arr.size).to eq(6)
+        expect(issues_arr.to_s).to include('/multi_goapps/app1/hello.go')
+        expect(issues_arr.to_s).to include('/multi_goapps/app2/hello.go')
+        expect(golang_errs.size).to eq(2)
+        expect(golang_errs.to_s).to include('/multi_goapps/app1/hello.go')
+        expect(golang_errs.to_s).to include('/multi_goapps/app2/hello.go')
+      end
+    end
+  end
+
   describe '#should_run?' do
     let(:scanner) { Salus::Scanners::Gosec.new(repository: repo, config: {}) }
 
@@ -225,6 +255,44 @@ describe Salus::Scanners::Gosec do
       end
     end
 
+    context 'active exceptions' do
+      let(:repo) { Salus::Repo.new('spec/fixtures/gosec/gosec_rules') }
+      let(:exceptions) do
+        [{ 'advisory_id' => "G101",
+          'expiration' => '2022-12-31',
+          'changed_by' => 'appsec',
+          'notes' => 'foo' }]
+      end
+      let(:config) { { "exceptions" => exceptions, "nosec" => "true" } }
+
+      before(:each) do
+        allow(Date).to receive(:today).and_return Date.new(2021, 12, 31)
+      end
+
+      it 'should honor active exceptions' do
+        expect(config_scanner.report.passed?).to eq(true)
+      end
+    end
+
+    context 'expired exceptions' do
+      let(:repo) { Salus::Repo.new('spec/fixtures/gosec/gosec_rules') }
+      let(:exceptions) do
+        [{ 'advisory_id' => "G101",
+          'expiration' => '2020-12-31',
+          'changed_by' => 'appsec',
+          'notes' => 'foo' }]
+      end
+      let(:config) { { "exceptions" => exceptions, "nosec" => "true" } }
+
+      before(:each) do
+        allow(Date).to receive(:today).and_return Date.new(2021, 12, 31)
+      end
+
+      it 'should ignore expired exceptions' do
+        expect(config_scanner.report.passed?).to eq(false)
+      end
+    end
+
     context 'when sorting by severity' do
       require 'json'
       let(:repo) { Salus::Repo.new('spec/fixtures/gosec/multiple_vulns') }
@@ -322,9 +390,18 @@ describe Salus::Scanners::Gosec do
   describe '#version_valid?' do
     context 'scanner version is valid' do
       it 'should return true' do
-        repo = Salus::Repo.new("dir")
+        repo = Salus::Repo.new('spec/fixtures/gosec')
         scanner = Salus::Scanners::Gosec.new(repository: repo, config: {})
         expect(scanner.version).to be_a_valid_version
+      end
+    end
+  end
+
+  describe '#supported_languages' do
+    context 'should return supported languages' do
+      it 'should return go' do
+        langs = Salus::Scanners::Gosec.supported_languages
+        expect(langs).to eq(['go'])
       end
     end
   end

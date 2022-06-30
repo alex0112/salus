@@ -12,13 +12,13 @@ The simplest way to provide custom configuration to Salus, is to put a `salus.ya
 docker run --rm -v $(pwd):/home/repo coinbase/salus --config file://tests/salus-config.yaml
 ```
 
-Salus also supports remote configuration files that can be fetched over HTTP. This is particularly useful for organization wide configurations that are centralize.
+Salus also supports remote configuration files that can be fetched over HTTP. This is particularly useful for organization wide configurations that are centralized.
 
 ```sh
 docker run --rm -v $(pwd):/home/repo coinbase/salus --config https://salus-config.internal.net/salus.yaml
 ```
 
-A third method of providing configuration URIs is via the environment variable `SALUS_CONFIGURATION`. If this envar is set, it will take precendence over the flag URI.
+A third method of providing configuration URIs is via the environment variable `SALUS_CONFIGURATION`. If this envar is set, it will take precedence over the flag URI.
 
 ### Cascading Configurations
 
@@ -46,25 +46,50 @@ project_name: "my-repo"
 # that might be used by the consumer of the Salus report.
 custom_info: "PR-123"
 
+
+# Cascade_config contains available settings to control how multiple configuration
+# files are cascaded.
+# Combine_arrays: Boolean.  Default: false.  When cascading configurations, determines if arrays are combined (with uniq applied) or if the current configuration overrides any previsouly loaded configurations (the default)
+cascade_config:
+  combine_arrays: false
+
+
 # Array[Hash[String=>String]]
 # Defines where to send Salus reports and in what format.
 #
 # Each Hash must contain keys for `uri` and `format`.
 # URIs can point to either the local file system or remote HTTP destinations.
-# - Request paramters (optional) can be included for HTTP destinations with the `params` field
-#   - if the report parameter is included, the report paramater would contain the salus report
+# - Request parameters (optional) can be included for HTTP destinations with the `params` field
+#   - if the report parameter is included, the report parameter would contain the salus report
 #   - when `report` is not included in params, the salus report will be located in the body of the request sent
-# The available formats are `json`, `yaml`, `txt` and `sarif`.
+# The available formats are `json`, `yaml`, `txt`, `sarif` and `cyclonedx-json`.
 # `verbose` is an optional key and defaults to false.
 # 
-# Each report hash can add post paramaters using the `post` key , 
-# - Salus reports can be sent as a report paramater by specifying the paramater name in `salus_report_param_name`
-# - additional post paramaters can be specified through the `additional_params` field
+# Each report hash can add post parameters using the `post` key , 
+# - Salus reports can be sent as a report parameter by specifying the parameter name in `salus_report_param_name`
+# - additional post parameters can be specified through the `additional_params` field
+#
+# Each report hash can also specify what http verb should be used (currently support `put` and `post` key),
+# and headers to set. 
+# - If not specified http verb defaults to `post`
+# - you can pass in `headers` with the corresponding list of name and value pairs.
+# - Values specified with two parentheses i.e `{{VALUE}}` will be treated as an environment variable `ENV[VALUE]` while values
+# specified without will be set as is. 
 #
 # Additional options are also available for sarif using the optional keyword: sarif_options
 # The available options for the sarif_options keyword are:
 # 1) `include_suppressed: true/false` -This option allows users to include/exclude suppressed/excluded results 
-#    in their sarif reports. Currently this is supported for NPM audit reports
+#    in their sarif reports. Currently this is supported for NPM audit reports.  Default is true.
+# 2) `include_non_enforced: true/false` - This option allows users to include or exclude results from active (non enforced)
+#    scanners in their sarif reports.  Default is true.
+#
+# Additional options are also available for cyclonedx using the optional keyword: cyclonedx_options
+# The available options for the cyclonedx_options keyword are:
+# 1) `cyclonedx_project_name: string` -This option allows users to specify the cyclonedx report project name.
+# 2) `spec_version: string` -This option allows users to specify the cyclonedx report spec version.
+#     Currently only versions 1.2 and 1.3 are supported with 1.3 being the default version if the
+#     parameter is not specified.
+
 reports:
   - uri: file://tests/salus-report.txt
     format: txt
@@ -79,6 +104,15 @@ reports:
       additional_params:
         repo: 'Random Repo'
         user: 'John Doe' 
+  - uri: https://salus-config.internal2.net/salus-report
+    format: cyclonedx-json
+    put:
+    headers:
+      Age: '12'
+      X-API-Key: '{{RANDOM_API_KEY}}'
+    cyclonedx_options:
+      cyclonedx_project_name: '{{SALUS_BUILD_ORG}}/{{SALUS_BUILD_PROJECT}}'
+      spec_version: '1.3'
   - uri: file://tests/salus-report.sarif
     format: sarif
   - uri: file://tests/salus-report.sarif
@@ -116,6 +150,30 @@ scanner_configs:
   BundleAudit:
     ignore:
       - CVE-XXXX-YYYY # irrelevant CVE which does not have a patch yet
+    recursion: # optional recusion settings.  
+      directory_exclusions: # Directories to exclude when recursing.  
+      # Any matches that occur in the list of directory_exclusions
+      # will be ignored
+        - vendor
+      directories: # Directories to recurse into.  When present,
+      # any directories that need to be scanned should explicitly listed
+        - ./
+        - payments/lhv
+        - infra/sso/identity_provider
+      directories_matching: # Dynamically identify directories to recurse into.
+      # Each entry may have a combination of filename and or content.  Filename
+      # matches on the name of the file, while content matches on the content within
+      # the file.
+        - 
+          filename: "BUILD.bazel"
+          content: "bundle//:rails"
+        - 
+          filename: "package.json"
+      static_files: # Files to copy from root directory to recused directories
+      # This can be useful for mono repositories where a common file should be 
+      # copied to sub directories for proper scanning.
+        - Gemfile
+        - Gemfile.lock
 ```
 
 Special configuration that exist for particular scanners is defined in the [scanners directory](/docs/scanners).

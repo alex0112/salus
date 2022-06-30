@@ -9,8 +9,12 @@ module Salus::Scanners
   class NPMAudit < NodeAudit
     AUDIT_COMMAND = 'npm audit --json'.freeze
 
+    def self.scanner_type
+      Salus::ScannerTypes::DEPENDENCY
+    end
+
     def should_run?
-      @repository.package_lock_json_present?
+      @repository.package_lock_json_present? && @repository.package_json_present?
     end
 
     def version
@@ -19,10 +23,20 @@ module Salus::Scanners
       shell_return.stdout&.strip
     end
 
+    def self.supported_languages
+      ['javascript']
+    end
+
     private
 
-    def scan_for_cves
-      raw = run_shell(AUDIT_COMMAND).stdout
+    def audit_command_with_options
+      command = AUDIT_COMMAND
+      command += " --production" if @config["production"] == true
+      command
+    end
+
+    def scan_for_cves(chdir: File.expand_path(@repository&.path_to_repo))
+      raw = run_shell(audit_command_with_options).stdout
       json = JSON.parse(raw, symbolize_names: true)
 
       if json.key?(:error)
@@ -30,12 +44,15 @@ module Salus::Scanners
         summary = json[:error][:summary] || '<none>'
 
         message =
-          "`#{AUDIT_COMMAND}` failed unexpectedly (error code #{code}):\n" \
+          "`#{audit_command_with_options}` failed unexpectedly (error code #{code}):\n" \
           "```\n#{summary}\n```"
 
         raise message
       end
 
+      if json[:advisories] && !json[:advisories].empty?
+        Salus::PackageLockJson.new(File.join(chdir, 'package-lock.json')).add_line_number(json)
+      end
       report_stdout(json)
 
       json.fetch(:advisories).values

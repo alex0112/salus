@@ -13,6 +13,7 @@ describe Salus::Scanners::Bandit do
         expect(repo.requirements_txt_present?).to eq(false)
         expect(repo.setup_cfg_present?).to eq(false)
         expect(scanner.should_run?).to eq(false)
+        expect(repo.py_files_present?).to eq(false)
       end
     end
 
@@ -22,6 +23,8 @@ describe Salus::Scanners::Bandit do
       it 'should return true' do
         expect(repo.requirements_txt_present?).to eq(true)
         expect(repo.setup_cfg_present?).to eq(false)
+        py_file = 'spec/fixtures/python/python_project_no_setup_cfg/main.py'
+        expect(repo.py_files_present?).to eq([py_file])
         expect(scanner.should_run?).to eq(true)
       end
     end
@@ -32,7 +35,25 @@ describe Salus::Scanners::Bandit do
       it 'should return true' do
         expect(repo.requirements_txt_present?).to eq(false)
         expect(repo.setup_cfg_present?).to eq(true)
+        py_file = 'spec/fixtures/python/python_project_no_req_txt/main.py'
+        expect(repo.py_files_present?).to eq([py_file])
         expect(scanner.should_run?).to eq(true)
+      end
+    end
+
+    context 'py files present but not requirements.txt/setup.cfg' do
+      let(:repo) { Salus::Repo.new("#{py_dir}/py_files_only") }
+
+      it 'should return true' do
+        expect(repo.requirements_txt_present?).to eq(false)
+        expect(repo.setup_cfg_present?).to eq(false)
+        py_file1 = 'spec/fixtures/python/py_files_only/subdir/p1.py'
+        py_file2 = 'spec/fixtures/python/py_files_only/subdir/p2.py'
+        py_files = repo.py_files_present?
+        expect(py_files.size).to eq(2)
+        expect(py_files).to include(py_file1)
+        expect(py_files).to include(py_file2)
+        expect(scanner.should_run?).to eq(false)
       end
     end
   end
@@ -155,6 +176,7 @@ describe Salus::Scanners::Bandit do
       end
 
       it 'and configfile says skip test_id B301' do
+        # spec/fixtures/python/python_project_vulns
         config_file = "#{py_dir}/salus_configs/config_file.yaml"
         configs = Salus::Config.new([File.read(config_file)]).scanner_configs['Bandit']
         scanner = Salus::Scanners::Bandit.new(repository: repo, config: configs)
@@ -166,6 +188,36 @@ describe Salus::Scanners::Bandit do
         results_b301 = logs['results'].select { |r| r['test_id'] == 'B301' }
 
         expect(results_b301).to be_empty
+      end
+    end
+
+    context 'when listing exceptions' do
+      let(:repo) { Salus::Repo.new("#{py_dir}/python_project_vulns") }
+
+      before(:each) do
+        allow(Date).to receive(:today).and_return Date.new(2021, 12, 31)
+      end
+
+      it 'should allow exception entries' do
+        config_file = "#{py_dir}/salus_configs/exceptions.yaml"
+        configs = Salus::Config.new([File.read(config_file)]).scanner_configs['Bandit']
+        scanner = Salus::Scanners::Bandit.new(repository: repo, config: configs)
+        scanner.run
+
+        expect(scanner.report.passed?).to eq(true)
+      end
+
+      it 'should support expirations' do
+        config_file = "#{py_dir}/salus_configs/expired-exceptions.yaml"
+        configs = Salus::Config.new([File.read(config_file)]).scanner_configs['Bandit']
+        scanner = Salus::Scanners::Bandit.new(repository: repo, config: configs)
+        scanner.run
+
+        expect(scanner.report.passed?).to eq(false)
+
+        logs = JSON.parse(scanner.report.to_h[:logs])
+        ids = logs['results'].map { |r| r["test_id"] }.uniq.sort
+        expect(ids).to eq(%w[B301 B403])
       end
     end
 
@@ -461,9 +513,18 @@ describe Salus::Scanners::Bandit do
   describe '#version_valid?' do
     context 'scanner version is valid' do
       it 'should return true' do
-        repo = Salus::Repo.new("dir")
+        repo = Salus::Repo.new(py_dir)
         scanner = Salus::Scanners::Bandit.new(repository: repo, config: {})
         expect(scanner.version).to be_a_valid_version
+      end
+    end
+  end
+
+  describe '#supported_languages' do
+    context 'should return supported languages' do
+      it 'should return python' do
+        langs = Salus::Scanners::Bandit.supported_languages
+        expect(langs).to eq(['python'])
       end
     end
   end

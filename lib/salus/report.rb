@@ -1,8 +1,29 @@
-require 'faraday'
 require 'json'
+require 'deepsort'
 require 'salus/formatting'
 require 'salus/bugsnag'
 
+# Adding aliases to prevent deep_sort from failing when comparing symbols and strings
+class Symbol
+  alias old_salus_compare <=>
+  def <=>(other)
+    if other.is_a? String
+      inspect <=> other
+    else
+      old_salus_compare other
+    end
+  end
+end
+class String
+  alias old_salus_compare <=>
+  def <=>(other)
+    if other.is_a? Symbol
+      old_salus_compare other.inspect
+    else
+      old_salus_compare other
+    end
+  end
+end
 module Salus
   class Report
     include Formatting
@@ -13,31 +34,42 @@ module Salus
     # FIXME(as3richa): make wrapping behaviour configurable
     WRAP = 100
 
-    CONTENT_TYPE_FOR_FORMAT = {
-      'json' => 'application/json',
-      'yaml' => 'text/x-yaml',
-      'txt'  => 'text/plain',
-      'sarif' => 'application/json',
-      'sarif_diff' => 'application/json'
-    }.freeze
-
     SUMMARY_TABLE_HEADINGS = ['Scanner', 'Running Time', 'Required', 'Passed'].freeze
 
     attr_reader :builds
+    attr_accessor :full_diff_sarif, :report_uris
 
     def initialize(report_uris: [], builds: {}, project_name: nil, custom_info: nil, config: nil,
-                   repo_path: nil, filter_sarif: nil, ignore_config_id: nil)
-      @report_uris = report_uris     # where we will send this report
-      @builds = builds               # build hash, could have arbitrary keys
-      @project_name = project_name   # the project_name we are scanning
-      @scan_reports = []             # ScanReports for each scan run
-      @errors = []                   # errors from Salus execution
-      @custom_info = custom_info     # some additional info to send
-      @config = config               # the configuration for this run
-      @running_time = nil            # overall running time for the scan; see #record
-      @filter_sarif = filter_sarif   # Filter out results from this file
-      @repo_path = repo_path         # path to repo
+                   repo_path: nil, filter_sarif: nil, ignore_config_id: nil,
+                   report_filter: DEFAULT_REPORT_FILTER, merge_by_scanner: false)
+      @report_uris = report_uris           # where we will send this report
+      @builds = builds                     # build hash, could have arbitrary keys
+      @project_name = project_name         # the project_name we are scanning
+      @scan_reports = []                   # ScanReports for each scan run
+      @errors = []                         # errors from Salus execution
+      @custom_info = custom_info           # some additional info to send
+      @config = config                     # the configuration for this run
+      @running_time = nil                  # overall running time for the scan; see #record
+      @filter_sarif = filter_sarif         # Filter out results from this file
+      @repo_path = repo_path               # path to repo
       @ignore_config_id = ignore_config_id # ignore id in salus config
+      @report_filter = report_filter       # filter reports that'll run based on their configuration
+      @full_diff_sarif = nil
+      @merge_by_scanner = merge_by_scanner # Flag to group to_h and to_s results by scanner
+    end
+
+    # Syntatical sugar to apply report hash filters
+    def apply_report_hash_filters(report_hash)
+      Salus::PluginManager.apply_filter(:salus_report, :filter_report_hash, report_hash)
+    end
+
+    def apply_report_sarif_filters(sarif_json)
+      Salus::PluginManager.apply_filter(:salus_report, :filter_report_sarif, sarif_json)
+    end
+
+    # Syntatical sugar register salus_report filters
+    def self.register_filter(filter)
+      Salus::PluginManager.register_filter(:salus_report, filter)
     end
 
     def record
@@ -59,10 +91,31 @@ module Salus
       @errors << hsh
     end
 
-    def to_h
-      scans = @scan_reports.map { |report, _required| [report.scanner_name, report.to_h] }.to_h
+    # We may have several scan reports from a given scanner.
+    # This will typically be from recusive scannings.  When
+    # @merge_by_scanner is true we will merge the ScanReports
+    # from a given scanner together.
+    #
+    # @returns [Array<ScanReport>]
+    def merged_reports
+      return @scan_reports unless @merge_by_scanner
 
-      {
+      reports = {}
+      @scan_reports.each do |report, required|
+        if reports.key?(report.scanner_name)
+          report = reports[report.scanner_name].first.merge!(report)
+        end
+        reports[report.scanner_name] = [report, required]
+      end
+
+      reports.values
+    end
+
+    def to_h
+      # We flatten the scan_reports by scanner here
+      scans = merged_reports.map { |report, _required| [report.scanner_name, report.to_h] }.to_h
+
+      report_hash = {
         version: VERSION,
         project_name: @project_name,
         passed: passed?,
@@ -72,6 +125,8 @@ module Salus
         custom_info: @custom_info,
         config: @config
       }.compact
+
+      apply_report_hash_filters(report_hash)
     end
 
     # Generates the text report.
@@ -81,7 +136,7 @@ module Salus
 
       # Sort scan reports required before optional, failed before passed,
       # and alphabetically by scanner name
-      scan_reports = @scan_reports.sort_by do |report, required|
+      scan_reports = merged_reports.sort_by do |report, required|
         [
           required ? 0 : 1,
           report.passed? ? 1 : 0,
@@ -105,7 +160,7 @@ module Salus
         output += "\n\n==== Salus Configuration\n\n"
       else
         # Include some info on which configuration files were used
-        stringified_config = @config[:sources][:valid].join("\n")
+        stringified_config = @config&.dig(:sources, :valid)&.join("\n").to_s
         output += "\n\n==== Salus Configuration Files Used:\n\n"
       end
 
@@ -126,15 +181,31 @@ module Salus
     end
 
     def to_yaml
+      YAML.dump(to_h.deep_sort)
+    rescue StandardError => e
+      bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
       YAML.dump(to_h)
     end
 
     def to_json
+      JSON.pretty_generate(to_h.deep_sort)
+    rescue StandardError => e
+      bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
       JSON.pretty_generate(to_h)
     end
 
     def to_sarif(config = {})
-      Sarif::SarifReport.new(@scan_reports, config).to_sarif
+      sarif_json = Sarif::SarifReport.new(@scan_reports, config, @repo_path).to_sarif
+      begin
+        sorted_sarif = JSON.parse(sarif_json).deep_sort
+      rescue StandardError => e
+        bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
+        sorted_sarif = JSON.parse(sarif_json)
+      end
+      # We will validate to ensure the applied filter
+      # doesn't produce any invalid SARIF
+      sarif_json = JSON.pretty_generate(sorted_sarif)
+      Sarif::SarifReport.validate_sarif(apply_report_sarif_filters(sarif_json))
     rescue StandardError => e
       bugsnag_notify(e.class.to_s + " " + e.message + "\nBuild Info:" + @builds.to_s)
     end
@@ -147,6 +218,7 @@ module Salus
       curr_sarif_results = get_sarif_results(curr_sarif_data)
       filter_sarif_results = get_sarif_results(filter_sarif_data)
       diff = (curr_sarif_results - filter_sarif_results).to_a
+
       diff_report['report_type'] = 'salus_sarif_diff'
       diff_report['filtered_results'] = diff
       diff_report['builds'] = to_h[:config][:builds]
@@ -168,58 +240,101 @@ module Salus
       sarif_results
     end
 
-    def export_report
-      @report_uris.each do |directive|
-        # First create the string for the report.
-        uri = directive['uri']
-        verbose = directive['verbose'] || false
-        # Now send this string to its destination.
-        report_string = case directive['format']
-                        when 'txt' then to_s(verbose: verbose)
-                        when 'json' then to_json
-                        when 'yaml' then to_yaml
-                        when 'sarif' then to_sarif(directive['sarif_options'] || {})
-                        when 'sarif_diff' then to_sarif_diff
-                        else
-                          raise ExportReportError, "unknown report format #{directive['format']}"
-                        end
-        if Salus::Config::REMOTE_URI_SCHEME_REGEX.match?(URI(uri).scheme)
-          send_report(uri, report_body(directive), directive['format'])
-        else
-          # must remove the file:// schema portion of the uri.
-          uri_object = URI(uri)
-          file_path = "#{uri_object.host}#{uri_object.path}"
-          if !safe_local_report_path?(file_path)
-            bad_path_msg = "Local report uri #{file_path} should be relative to repo path and " \
-                           "cannot have invalid chars"
-            raise StandardError, bad_path_msg
-          end
-          write_report_to_file(file_path, report_string)
+    def to_full_sarif_diff
+      JSON.pretty_generate(@full_diff_sarif)
+    end
+
+    def to_cyclonedx(config = {})
+      cyclonedx_bom = Cyclonedx::Report.new(@scan_reports, config).to_cyclonedx
+      begin
+        sorted_cyclonedx_bom = cyclonedx_bom.deep_sort
+      rescue StandardError => e
+        bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
+        sorted_cyclonedx_bom = cyclonedx_bom
+      end
+
+      cyclonedx_report = {
+        autoCreate: true,
+        projectName: config['cyclonedx_project_name'] || "",
+        projectVersion: "1",
+        bom: Base64.strict_encode64(JSON.generate(sorted_cyclonedx_bom))
+      }
+      begin
+        sorted_cyclonedx_report = cyclonedx_report.deep_sort
+      rescue StandardError => e
+        bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
+        sorted_cyclonedx_report = cyclonedx_report
+      end
+      JSON.pretty_generate(sorted_cyclonedx_report)
+    rescue StandardError => e
+      bugsnag_notify(e.class.to_s + " " + e.message + "\nBuild Info:" + @builds.to_s)
+    end
+
+    def publish_report(directive)
+      # First create the string for the report.
+      uri = directive['uri']
+      verbose = directive['verbose'] || false
+      # Now send this string to its destination.
+      report_string = case directive['format']
+                      when 'txt' then to_s(verbose: verbose)
+                      when 'json' then to_json
+                      when 'yaml' then to_yaml
+                      when 'sarif' then to_sarif(directive['sarif_options'] || {})
+                      when 'sarif_diff' then to_sarif_diff
+                      when 'sarif_diff_full' then to_full_sarif_diff
+                      when 'cyclonedx-json' then to_cyclonedx(directive['cyclonedx_options'] || {})
+                      else
+                        raise ExportReportError, "unknown report format #{directive['format']}"
+                      end
+      if Salus::Config::REMOTE_URI_SCHEME_REGEX.match?(URI(uri).scheme)
+        Salus::ReportRequest.send_report(directive, report_body(directive), uri)
+      else
+        # must remove the file:// schema portion of the uri.
+        uri_object = URI(uri)
+        file_path = "#{uri_object.host}#{uri_object.path}"
+        if !safe_local_report_path?(file_path)
+          bad_path_msg = "Local report uri #{file_path} should be relative to repo path and " \
+                         "cannot have invalid chars"
+          raise StandardError, bad_path_msg
         end
+        write_report_to_file(file_path, report_string)
       end
     end
 
-    def x_scanner_type(format)
-      if format == 'sarif_diff'
-        "salus_sarif_diff"
-      else
-        "salus"
+    def satisfies_filter?(directive, filter_key, filter_value)
+      directive.key?(filter_key) && (
+        # rubocop:disable Style/MultipleComparison
+        directive[filter_key] == filter_value || filter_value == '*'
+        # rubocop:enable Style/MultipleComparison
+      )
+    end
+
+    def export_report
+      return [] if @report_filter == 'none'
+
+      recovered_values = @report_filter.split(':', 2)
+      filter_key = recovered_values[0]
+      filter_value = recovered_values[1]
+      if @report_filter != 'all' && (filter_key.to_s == '' || filter_value.to_s == '')
+        raise ExportReportError, 'Poorly formatted report filter found. ' \
+          'Filter key and pattern must be non-empty strings'
       end
+
+      @report_uris.each do |directive|
+        if @report_filter == 'all' || satisfies_filter?(directive, filter_key, filter_value)
+          publish_report(directive)
+        end
+      end
+    rescue StandardError => e
+      raise e if ENV['RUNNING_SALUS_TESTS']
+
+      puts "Could not send Salus report: (#{e.class}: #{e.message}), #{e.backtrace}"
+      e = "Could not send Salus report. Exception: #{e}, Build info: #{builds}, #{e.backtrace}"
+      bugsnag_notify(e)
     end
 
     def safe_local_report_path?(path)
-      return true if @repo_path.nil?
-
-      path = Pathname.new(File.expand_path(path)).cleanpath.to_s
-      rpath = File.expand_path(@repo_path)
-
-      if !path.start_with?(rpath + "/") || path.include?("/.")
-        # the 2nd condition covers like abcd/.hidden_file or abcd/..filename
-        # which cleanpath does not do anything about
-        return false
-      end
-
-      true
+      Salus::PathValidator.new(@repo_path).local_to_base?(path)
     end
 
     private
@@ -237,7 +352,7 @@ module Salus
 
         row = [
           scan_report.scanner_name,
-          "#{scan_report.running_time}s",
+          "#{scan_report.running_time || 0}s",
           required ? 'yes' : 'no',
           scan_report.passed? ? 'yes' : 'no'
         ]
@@ -265,22 +380,8 @@ module Salus
             "Cannot write file #{report_file_path} - #{e.class}: #{e.message}"
     end
 
-    def send_report(remote_uri, data, format)
-      response = Faraday.post do |req|
-        req.url remote_uri
-        req.headers['Content-Type'] = CONTENT_TYPE_FOR_FORMAT[format]
-        req.headers['X-Scanner'] = x_scanner_type(format)
-        req.body = data
-      end
-
-      unless response.success?
-        raise ExportReportError,
-              "POST of Salus report to #{remote_uri} had response status #{response.status}."
-      end
-    end
-
     def report_body_hash(config, data)
-      return data unless config&.key?('post')
+      return data unless config&.key?('post') && config['post'].present?
 
       body_hash = config['post']['additional_params'] || {}
       return body_hash unless config['post']['salus_report_param_name']
@@ -293,14 +394,33 @@ module Salus
       verbose = config['verbose']
       return report_body_hash(config, to_s(verbose: verbose)).to_s if config['format'] == 'txt'
 
-      body = report_body_hash(config, JSON.parse(to_json)) if config['format'] == 'json'
-      if config['format'] == 'sarif'
-        body = report_body_hash(config, JSON.parse(to_sarif(config['sarif_options'] || {})))
-      end
-      body = report_body_hash(config, JSON.parse(to_sarif_diff)) if config['format'] == 'sarif_diff'
-      return JSON.pretty_generate(body) if %w[json sarif sarif_diff].include?(config['format'])
+      body = case config['format']
+             when 'json'
+               to_json
+             when 'sarif'
+               to_sarif(config['sarif_options'] || {})
+             when 'sarif_diff'
+               to_sarif_diff
+             when 'sarif_diff_full'
+               to_full_sarif_diff
+             when 'cyclonedx-json'
+               to_cyclonedx(config['cyclonedx_options'] || {})
+             end
 
-      return YAML.dump(report_body_hash(config, to_h)) if config['format'] == 'yaml'
+      if %w[json sarif sarif_diff sarif_diff_full cyclonedx-json].include?(config['format'])
+        body = JSON.parse(body)
+        return JSON.pretty_generate(report_body_hash(config, body))
+      end
+
+      # When creating a report body for yaml #to_yaml is not called
+      # This sorts the hash before the report is generated
+      begin
+        body = to_h.deep_sort
+      rescue StandardError => e
+        bugsnag_notify(e.inspect + "\n" + e.message + "\nResult String: " + to_h.to_s)
+        body = to_h
+      end
+      return YAML.dump(report_body_hash(config, body)) if config['format'] == 'yaml'
 
       raise ExportReportError, "unknown report format #{directive['format']}"
     end

@@ -3,105 +3,105 @@ require_relative '../../../spec_helper.rb'
 describe Salus::Scanners::ReportRustCrates do
   describe '#run' do
     let(:expected_packages) do
-      [{ type: "cargo_lock",
+      [{ type: "cargo",
            name: "autocfg",
            reference: "registry+https://github.com/rust-lang/crates.io-index",
-           version_tag: "0.1.7",
+           version: "0.1.7",
            dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "bitflags",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "1.2.1",
+         version: "1.2.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "cloudabi",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.0.3",
+         version: "0.0.3",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
         name: "foo",
         reference: nil,
-        version_tag: "0.1.0",
+        version: "0.1.0",
         dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "fuchsia-cprng",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.1",
+         version: "0.1.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "libc",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.2.77",
+         version: "0.2.77",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.6.5",
+         version: "0.6.5",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_chacha",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.1",
+         version: "0.1.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_core",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.3.1",
+         version: "0.3.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_core",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.4.2",
+         version: "0.4.2",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_hc",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.0",
+         version: "0.1.0",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_isaac",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.1",
+         version: "0.1.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_jitter",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.4",
+         version: "0.1.4",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_os",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.3",
+         version: "0.1.3",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_pcg",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.2",
+         version: "0.1.2",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rand_xorshift",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.1.1",
+         version: "0.1.1",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "rdrand",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.4.0",
+         version: "0.4.0",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "winapi",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.3.9",
+         version: "0.3.9",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "winapi-i686-pc-windows-gnu",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.4.0",
+         version: "0.4.0",
          dependency_file: "Cargo.lock" },
-       { type: "cargo_lock",
+       { type: "cargo",
          name: "winapi-x86_64-pc-windows-gnu",
          reference: "registry+https://github.com/rust-lang/crates.io-index",
-         version_tag: "0.4.0",
+         version: "0.4.0",
          dependency_file: "Cargo.lock" }]
     end
 
@@ -121,7 +121,7 @@ describe Salus::Scanners::ReportRustCrates do
 
       # We will stub the lock file generate to keep our specs from needing to
       # hit the internet and pulldown the dependency graph
-      allow(scanner).to receive(:run_shell).with(/cargo tree/) do
+      allow(scanner).to receive(:run_shell).with(/cargo tree/, chdir: nil) do
         existing_lock = 'spec/fixtures/report_rust_crates/lock_only/Cargo.lock'
         mock_lock = File.join(repo.path_to_repo, 'Cargo.lock')
         FileUtils.cp existing_lock, mock_lock
@@ -138,7 +138,7 @@ describe Salus::Scanners::ReportRustCrates do
       scanner = Salus::Scanners::ReportRustCrates.new(repository: repo, config: {})
 
       # Mock with an empty stub to prevent the .lock file from being generated
-      expect(scanner).to receive(:run_shell).with(/cargo tree/)
+      expect(scanner).to receive(:run_shell).with(/cargo tree/, chdir: nil)
 
       msg = 'Rust .lock file missing.Check write premissions and Cargo version is at least 1.44'
       expect { scanner.run }.to raise_error(Salus::Scanners::ReportRustCrates::MissingRustLock,
@@ -199,6 +199,15 @@ describe Salus::Scanners::ReportRustCrates do
         repo = Salus::Repo.new("dir")
         scanner = Salus::Scanners::ReportRustCrates.new(repository: repo, config: {})
         expect(scanner.version).to eq('')
+      end
+    end
+  end
+
+  describe '#supported_languages' do
+    context 'should return supported languages' do
+      it 'should return expected langs' do
+        langs = Salus::Scanners::ReportRustCrates.supported_languages
+        expect(langs).to eq(['rust'])
       end
     end
   end

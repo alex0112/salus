@@ -6,7 +6,12 @@ describe Salus::Scanners::Base do
 
   describe 'run!' do
     let(:salus_report) { Salus::Report.new }
-    let(:scanner) { Salus::Scanners::BundleAudit.new(repository: repository, config: {}) }
+    let(:scanner) do
+      Salus::Scanners::BundleAudit.new(
+        repository: repository,
+        config: { 'scanner_timeout_s' => 0 }
+      )
+    end
     before do
       allow(scanner).to receive(:run).and_raise(RuntimeError, 'bundle audit failed')
     end
@@ -22,6 +27,7 @@ describe Salus::Scanners::Base do
       end.not_to raise_error
 
       salus_errors = salus_report.to_h[:errors]
+
       scanner_errors = salus_report.to_h[:scans]['BundleAudit'][:errors]
       expect(salus_errors).to eq(scanner_errors)
       expect(salus_errors.first).to include(
@@ -30,7 +36,7 @@ describe Salus::Scanners::Base do
       )
     end
 
-    it 'should catch excepetions and fail the build if pass_on_raise false' do
+    it 'should catch exceptions and fail the build if pass_on_raise false' do
       expect do
         scanner.run!(
           salus_report: salus_report,
@@ -43,7 +49,7 @@ describe Salus::Scanners::Base do
       expect(salus_report.passed?).to eq(false)
     end
 
-    it 'should catch excepetions and fail the build if pass_on_raise false' do
+    it 'should catch exceptions and fail the build if pass_on_raise false' do
       expect do
         scanner.run!(
           salus_report: salus_report,
@@ -54,6 +60,26 @@ describe Salus::Scanners::Base do
       end.not_to raise_error
 
       expect(salus_report.passed?).to eq(true)
+    end
+
+    it 'should time out when execution time exceeds configured timeout' do
+      timeout_s = 2
+      sleeping_scanner = Salus::Scanners::BundleAudit.new(
+        repository: repository,
+        config: { 'scanner_timeout_s' => timeout_s }
+      )
+      allow(sleeping_scanner).to receive(:run) { sleep(5) }
+      expect do
+        sleeping_scanner.run!(
+          salus_report: salus_report,
+          required: true,
+          pass_on_raise: false,
+          reraise: true
+        )
+      end.to raise_error(
+        Salus::Scanners::Base::ScannerTimeoutError,
+        "Scanner BundleAudit timed out after #{timeout_s} seconds"
+      )
     end
   end
 
@@ -74,8 +100,8 @@ describe Salus::Scanners::Base do
       fake_process_status = instance_double('Process::Status')
       allow(fake_process_status).to receive(:success?).and_return(false)
       allow(fake_process_status).to receive(:exitstatus).and_return(255)
-
-      expect(Open3).to receive(:capture3).with({}, 'ls', stdin_data: '').and_return(
+      chdir = File.expand_path(repository.path_to_repo)
+      expect(Open3).to receive(:capture3).with({}, 'ls', stdin_data: '', chdir: chdir).and_return(
         [
           "file_a\nfile_b\nfile_c",
           'error string',

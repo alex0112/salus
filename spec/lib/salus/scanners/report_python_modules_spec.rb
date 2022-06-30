@@ -29,19 +29,19 @@ describe Salus::Scanners::ReportPythonModules do
           dependency_file: 'requirements.txt',
           name: 'requests',
           version: '>=2.5',
-          type: 'python_requirement'
+          type: 'pypi'
         },
         {
           dependency_file: 'requirements.txt',
           name: 'six',
           version: '>=1.9',
-          type: 'python_requirement'
+          type: 'pypi'
         },
         {
           dependency_file: 'requirements.txt',
           name: 'pycryptodome',
           version: '>=3.4.11',
-          type: 'python_requirement'
+          type: 'pypi'
         }
       ]
     )
@@ -53,6 +53,15 @@ describe Salus::Scanners::ReportPythonModules do
         repo = Salus::Repo.new("dir")
         scanner = Salus::Scanners::ReportPythonModules.new(repository: repo, config: {})
         expect(scanner.version).to eq('')
+      end
+    end
+  end
+
+  describe '#supported_languages' do
+    context 'should return supported languages' do
+      it 'should return expected langs' do
+        langs = Salus::Scanners::ReportPythonModules.supported_languages
+        expect(langs).to eq(['python'])
       end
     end
   end

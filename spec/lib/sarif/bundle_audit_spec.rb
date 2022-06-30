@@ -6,61 +6,74 @@ describe Sarif::BundleAuditSarif do
     before { scanner.run }
 
     context 'scan report with logged vulnerabilities' do
-      let(:repo) { Salus::Repo.new('spec/fixtures/bundle_audit/cves_found') }
+      let(:path) { 'spec/fixtures/bundle_audit/cves_found' }
+      let(:repo) { Salus::Repo.new(path) }
 
       it 'updates ids accordingly' do
-        bundle_audit_sarif = Sarif::BundleAuditSarif.new(scanner.report)
+        bundle_audit_sarif = Sarif::BundleAuditSarif.new(scanner.report, path)
         issue = { "type": "InsecureSource",
-          "source": "http://rubygems.org/" }
+                  "source": "http://rubygems.org/",
+                  "line_number": 123 }
 
         parsed_issue = bundle_audit_sarif.parse_issue(issue)
         expect(parsed_issue[:id]).to eq("InsecureSource")
         expect(parsed_issue[:name]).to eq("InsecureSource http://rubygems.org/")
         expect(parsed_issue[:details]).to eq("Type: InsecureSource\nSource: http://rubygems.org/")
+        expect(parsed_issue[:start_line]).to eq(123)
+        expect(parsed_issue[:start_column]).to eq(1)
 
         issue = { "type": "UnpatchedGem",
                   "cve": "CVE1234",
-                  "url": '1' }
+                  "url": '1',
+                  "line_number": 456,
+                  "name": "boo" }
         parsed_issue = bundle_audit_sarif.parse_issue(issue)
         expect(parsed_issue[:id]).to eq("CVE1234")
+        expect(parsed_issue[:start_line]).to eq(456)
+        expect(parsed_issue[:start_column]).to eq(1)
+        expect(parsed_issue[:code]).to eq('boo')
 
         issue = { "osvdb": "osvd value",
-          "url": '3' }
+          "url": '3', "line_number": 789 }
         parsed_issue = bundle_audit_sarif.parse_issue(issue)
         expect(parsed_issue[:id]).to eq("osvd value")
+        expect(parsed_issue[:start_line]).to eq(789)
+        expect(parsed_issue[:start_column]).to eq(1)
       end
 
       it 'parses information correctly' do
-        bundle_audit_sarif = Sarif::BundleAuditSarif.new(scanner.report)
-        issue = scanner.report.to_h[:info][:vulnerabilities][0]
+        bundle_audit_sarif = Sarif::BundleAuditSarif.new(scanner.report, path)
+        issue = scanner.report.to_h[:info][:vulnerabilities]
+        issue = issue.detect { |i| i[:cve] == 'CVE-2021-22885' }
 
-        # should Parse and fill out hash
-        expected = "Package Name: actionpack\nType: UnpatchedGem\nVersion: 4.1.15\n Advisory"\
-        " Title: Possible Strong Parameters Bypass in ActionPack\nDesciption: There is a strong"\
-        " parameters bypass vector in ActionPack.\n\nVersions Affected:  rails <= 6.0.3\nNot "\
-        "affected:       rails < 4.0.0\nFixed Versions:     rails >= 5.2.4.3, rails >= 6.0.3.1"\
-        "\n\nImpact\n------\nIn some cases user supplied information can be inadvertently leaked"\
-        " from\nStrong Parameters.  Specifically the return value of `each`, or `each_value`,\nor"\
-        " `each_pair` will return the underlying \"untrusted\" hash of data that was\nread from "\
-        "the parameters.  Applications that use this return value may be\ninadvertently use "\
-        "untrusted user input.\n\nImpacted code will look something like this:\n\n```\ndef update"\
-        "\n  # Attacker has included the parameter: `{ is_admin: true }`\n  "\
-        "User.update(clean_up_params)\nend\n\ndef clean_up_params\n   params.each { |k, v|  "\
-        "SomeModel.check(v) if k == :name }\nend\n```\n\nNote the mistaken use of `each` in the"\
-        " `clean_up_params` method in the above\nexample.\n\nWorkarounds\n-----------\nDo not use"\
-        " the return values of `each`, `each_value`, or `each_pair` in your\napplication.\n\n"\
-        "Patched Versions: [\"~> 5.2.4, >= 5.2.4.3\", \">= 6.0.3.1\"]\nUnaffected Versions: "\
-        "[\"< 4.0.0\"]\n"\
-        "CVSS: \nOSVDB "
+        expected_details = bundle_audit_sarif.parse_issue(issue)[:details]
 
-        expect(bundle_audit_sarif.parse_issue(issue)).to include(
-          id: "CVE-2020-8164",
-          details: expected,
-          name: "Possible Strong Parameters Bypass in ActionPack",
-          level: 0,
-          help_url: "https://groups.google.com/forum/#!topic/rubyonrails-security/f6ioe4sdpbY",
-          uri: "Gemfile.lock"
-        )
+        if expected_details.include?('CVE-2021-22885')
+          details = 'There is a possible information disclosure / unintended method'
+          expect(expected_details).to include(details)
+
+          expect(bundle_audit_sarif.parse_issue(issue)).to include(
+            id: "CVE-2021-22885",
+            name: "Possible Information Disclosure / Unintended Method Execution in Action Pack",
+            level: 0,
+            help_url: "https://groups.google.com/g/rubyonrails-security/c/NiQl-48cXYI",
+            uri: "Gemfile.lock",
+            start_line: 8,
+            start_column: 1,
+            code: 'actionpack'
+          )
+        else
+          details = 'There is a possible DoS vulnerability in the Token Authentication logic in'
+          expect(expected_details).to include(details)
+
+          expect(bundle_audit_sarif.parse_issue(issue)).to include(
+            id: "CVE-2020-8164",
+            name: "Possible Strong Parameters Bypass in ActionPack",
+            level: 0,
+            help_url: "https://groups.google.com/forum/#!topic/rubyonrails-security/f6ioe4sdpbY",
+            uri: "Gemfile.lock"
+          )
+        end
       end
     end
   end
@@ -86,39 +99,31 @@ describe Sarif::BundleAuditSarif do
       it 'should return valid sarif report' do
         report = Salus::Report.new(project_name: "Neon Genesis")
         report.add_scan_report(scanner.report, required: false)
-        result = JSON.parse(report.to_sarif)["runs"][0]["results"][0]
-        rules = JSON.parse(report.to_sarif)["runs"][0]["tool"]["driver"]["rules"][0]
+        cve = 'CVE-2021-22885'
 
-        expected = "Package Name: actionpack\nType: UnpatchedGem\nVersion: 4.1.15\n Advisory"\
-        " Title: Possible Strong Parameters Bypass in ActionPack\nDesciption: There is a strong"\
-        " parameters bypass vector in ActionPack.\n\nVersions Affected:  rails <= 6.0.3\nNot "\
-        "affected:       rails < 4.0.0\nFixed Versions:     rails >= 5.2.4.3, rails >= 6.0.3.1"\
-        "\n\nImpact\n------\nIn some cases user supplied information can be inadvertently leaked"\
-        " from\nStrong Parameters.  Specifically the return value of `each`, or `each_value`,\nor"\
-        " `each_pair` will return the underlying \"untrusted\" hash of data that was\nread from "\
-        "the parameters.  Applications that use this return value may be\ninadvertently use "\
-        "untrusted user input.\n\nImpacted code will look something like this:\n\n```\ndef update"\
-        "\n  # Attacker has included the parameter: `{ is_admin: true }`\n  "\
-        "User.update(clean_up_params)\nend\n\ndef clean_up_params\n   params.each { |k, v|  "\
-        "SomeModel.check(v) if k == :name }\nend\n```\n\nNote the mistaken use of `each` in the"\
-        " `clean_up_params` method in the above\nexample.\n\nWorkarounds\n-----------\nDo not use"\
-        " the return values of `each`, `each_value`, or `each_pair` in your\napplication.\n\n"\
-        "Patched Versions: [\"~> 5.2.4, >= 5.2.4.3\", \">= 6.0.3.1\"]\nUnaffected Versions: "\
-        "[\"< 4.0.0\"]\n"\
-        "CVSS: \nOSVDB "
+        sarif = JSON.parse(report.to_sarif({ 'include_non_enforced' => true }))
+        results = sarif["runs"][0]["results"]
+        result = results.detect { |r| r["ruleId"] == cve }
+
+        rules = sarif["runs"][0]["tool"]["driver"]["rules"]
+        rule = rules.detect { |r| r["id"] == cve }
 
         # Check rule info
-        expect(rules['id']).to eq('CVE-2020-8164')
-        expect(rules['name']).to eq("Possible Strong Parameters Bypass in ActionPack")
-        expect(rules['helpUri']).to eq("https://groups.google.com/forum/#!topic/rubyonrails"\
-          "-security/f6ioe4sdpbY")
-        expect(rules['fullDescription']['text']).to include(expected)
+        expect(rule['id']).to eq(cve)
+        rule_name = 'Possible Information Disclosure / Unintended Method Execution in Action Pack'
+        expect(rule['name']).to eq(rule_name)
+        rule_uri = 'https://groups.google.com/g/rubyonrails-security/c/NiQl-48cXYI'
+        expect(rule['helpUri']).to eq(rule_uri)
+        expected = 'There is a possible information disclosure / unintended method'
+        expect(rule['fullDescription']['text']).to include(expected)
 
         # Check result info
-        expect(result['ruleId']).to eq('CVE-2020-8164')
-        expect(result['ruleIndex']).to eq(0)
+        expect(result['ruleId']).to eq(cve)
         expect(result['level']).to eq("note")
         expect(result['message']['text']).to include(expected)
+        region = result['locations'][0]['physicalLocation']['region']
+        expect(region['startLine']).to eq(8)
+        expect(region['startColumn']).to eq(1)
       end
     end
   end
@@ -130,6 +135,37 @@ describe Sarif::BundleAuditSarif do
         expect(adapter.sarif_level(0)).to eq("note")
         expect(adapter.sarif_level(5.6)).to eq("warning")
         expect(adapter.sarif_level(9.7)).to eq("error")
+      end
+    end
+  end
+
+  describe 'sarif diff' do
+    context 'git diff support' do
+      let(:new_lines_in_git_diff) do
+        git_diff_file = 'spec/fixtures/sarifs/diff/git_diff_7.txt'
+        git_diff = File.read(git_diff_file)
+        Sarif::BaseSarif.new_lines_in_git_diff(git_diff)
+      end
+
+      it 'should find code in git diff' do
+        snippet = 'helloworld'
+        r = Sarif::BundleAuditSarif.snippet_possibly_in_git_diff?(snippet, new_lines_in_git_diff)
+        expect(r).to be true
+        snippet = 'bye'
+        r = Sarif::BundleAuditSarif.snippet_possibly_in_git_diff?(snippet, new_lines_in_git_diff)
+        expect(r).to be true
+      end
+
+      it 'should not match part of the package name' do
+        snippet = 'hello'
+        r = Sarif::BundleAuditSarif.snippet_possibly_in_git_diff?(snippet, new_lines_in_git_diff)
+        expect(r).to be false
+      end
+
+      it 'should not match package that was in git diff but not added with this commit' do
+        snippet = 'fuubar'
+        r = Sarif::BundleAuditSarif.snippet_possibly_in_git_diff?(snippet, new_lines_in_git_diff)
+        expect(r).to be false
       end
     end
   end

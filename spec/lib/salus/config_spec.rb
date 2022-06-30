@@ -63,6 +63,22 @@ describe Salus::Config do
       end
     end
 
+    context 'bad files given as source' do
+      it 'should ignore bad files' do
+        config = Salus::Config.new([config_file_1, 'false'])
+        expect(config.active_scanners).to eq(Set.new(Salus::Config::SCANNERS.keys))
+        expect(config.enforced_scanners).to eq(Set.new(%w[BundleAudit Brakeman]))
+
+        config = Salus::Config.new(['false', config_file_1])
+        expect(config.active_scanners).to eq(Set.new(Salus::Config::SCANNERS.keys))
+        expect(config.enforced_scanners).to eq(Set.new(%w[BundleAudit Brakeman]))
+
+        config = Salus::Config.new(['false', config_file_1], ['ABCD'])
+        expect(config.active_scanners).to eq(Set.new(Salus::Config::SCANNERS.keys))
+        expect(config.enforced_scanners).to eq(Set.new(%w[BundleAudit Brakeman]))
+      end
+    end
+
     context 'files point to envars that need to be interpolated' do
       it 'should replace references to envars with the envar values' do
         allow(ENV).to receive(:[]).and_call_original # allow calls in general
@@ -116,6 +132,37 @@ describe Salus::Config do
       )
     end
 
+    it 'should replace arrays by default' do
+      config = Salus::Config.new([config_file_1, config_file_2])
+      expect(config.scanner_configs['BundleAudit']).to include(
+        'ignore' => %w[CVE-AAAA-BBBB CVE-XXXX-YYYY],
+        'failure_message' => 'Please upgrade the failing dependency.'
+      )
+
+      expect(config.enforced_scanners.to_a).to eq(%w[BundleAudit ExtraScanner])
+    end
+
+    it 'should replace arrays when configured' do
+      config_file = File.read('spec/fixtures/config/cascade_arrays_false.yaml')
+      config = Salus::Config.new([config_file_1, config_file])
+      expect(config.scanner_configs['BundleAudit']).to include(
+        'ignore' => %w[CVE-AAAA-BBBB CVE-XXXX-YYYY],
+        'failure_message' => 'Please upgrade the failing dependency.'
+      )
+
+      expect(config.enforced_scanners.to_a).to eq(%w[BundleAudit ExtraScanner])
+    end
+
+    it 'should combine arrays when configured' do
+      config_file = File.read('spec/fixtures/config/cascade_arrays.yaml')
+      config = Salus::Config.new([config_file_1, config_file])
+      expect(config.scanner_configs['BundleAudit']).to include(
+        'ignore' => %w[CVE-AAAA-BBBB CVE-XXXX-YYYY],
+        'failure_message' => 'Please upgrade the failing dependency.'
+      )
+      expect(config.enforced_scanners.to_a).to eq(%w[BundleAudit Brakeman ExtraScanner])
+    end
+
     it 'should apply default scanner config for each scanner' do
       config = Salus::Config.new([config_file_1])
       expect(config.scanner_configs.none? { |_, conf| conf['pass_on_raise'] }).to eq(true)
@@ -139,6 +186,32 @@ describe Salus::Config do
       expect(config.scanner_configs['NodeAudit']).to include(expected_config)
       expect(config.scanner_configs['NPMAudit']).to include(expected_config)
       expect(config.scanner_configs['YarnAudit']).to include(expected_config)
+    end
+
+    it 'should merge arrays in all NodeAudit related configuration' do
+      yarn_audit_config = File.read('spec/fixtures/config/yarn_audit_config.yaml')
+      npm_audit_config = File.read('spec/fixtures/config/npm_audit_config2.yaml')
+      node_audit_config = File.read('spec/fixtures/config/node_audit_config2.yaml')
+      config = Salus::Config.new([yarn_audit_config, npm_audit_config, node_audit_config])
+
+      expected_exceptions = [
+        { 'advisory_id' => '12', 'changed_by' => 'appsec team', 'notes' => 'barfoo' },
+        { 'advisory_id' => '23', 'changed_by' => 'me', 'notes' => 'baz' },
+        { 'advisory_id' => '33', 'changed_by' => 'appsec team', 'notes' => 'barfoo' }
+      ]
+      expected_ex_groups = %w[dependencies devDependencies optionalDependencies]
+
+      %w[NodeAudit NPMAudit YarnAudit].each do |scanner|
+        # from NodeAudit config
+        expect(config.scanner_configs[scanner]['foo']).to eq('bar')
+        # from all 3 configs combined
+        expect(config.scanner_configs[scanner]['exclude_groups'].sort).to eq(expected_ex_groups)
+        # from all 3 configs combined
+        expect(config.scanner_configs[scanner]['exceptions'].size).to eq(3)
+        expected_exceptions.each do |ex|
+          expect(config.scanner_configs[scanner]['exceptions']).to include(ex)
+        end
+      end
     end
   end
 

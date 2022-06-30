@@ -4,8 +4,8 @@ module Sarif
     include Salus::SalusBugsnag
     YARN_URI = 'https://classic.yarnpkg.com/en/docs/cli/audit/'.freeze
 
-    def initialize(scan_report)
-      super(scan_report)
+    def initialize(scan_report, repo_path = nil)
+      super(scan_report, {}, repo_path)
       @uri = YARN_URI
       parse_scan_report!
     end
@@ -22,16 +22,26 @@ module Sarif
       return nil if @issues.include?(id)
 
       @issues.add(id)
-      {
+      parsed_issue = {
         id: issue['ID'].to_s,
         name: issue['Title'],
         level: issue['Severity'].upcase,
-        details: "Title: #{issue['Title']}\nPackage: #{issue['Package']}\nPatched in: "\
-        "#{issue['Patched in']}\nDependency of:#{issue['Dependency of']} \nSeverity: "\
-        "#{issue['Severity']}",
+        details: (issue['Title']).to_s + ", Dependency of: " + issue['Dependency of'],
+        messageStrings: { "package": { "text": (issue['Package']).to_s },
+                         "severity": { "text": (issue['Severity']).to_s },
+                         "patched_versions": { "text": (issue['Patched in']).to_s },
+                         "dependency_of": { "text": (issue['Dependency of']).to_s } },
+        properties: { 'severity': (issue['Severity']).to_s },
         uri: "yarn.lock",
         help_url: issue['More info']
       }
+
+      if issue.key?("Line number")
+        parsed_issue[:start_line] = issue['Line number']
+        parsed_issue[:start_column] = 1
+        parsed_issue[:code] = issue["Package"]
+      end
+      parsed_issue
     end
 
     # fullDescription on a rule should not explain a single vulnerability
@@ -59,6 +69,11 @@ module Sarif
       else
         SARIF_WARNINGS[:note]
       end
+    end
+
+    def self.snippet_possibly_in_git_diff?(snippet, lines_added)
+      snippet += "@"
+      lines_added.keys.any? { |line| line.start_with? snippet }
     end
   end
 end

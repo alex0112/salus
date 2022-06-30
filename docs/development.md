@@ -8,14 +8,15 @@ To develop Salus, you will need to install Ruby and the relevant dependencies. B
 ### install Ruby per https://www.ruby-lang.org/en/documentation/installation/
 
 ### Install gems
-gem install bundler -v'2.0.2'
+gem install bundler
 bundle install
 
 ### Install other system dependencies
 # for NPM, install per https://www.npmjs.com/get-npm
+# for Yarn, install per https://classic.yarnpkg.com/en/docs/install/#mac-stable
 # for Go reporting, install Go per https://golang.org/doc/install#install
 # for PatternSearch, install sift per https://sift-tool.org/download
-# for Semgrep, install semgrep per https://github.com/returntocorp/semgrep#installation
+# for Semgrep, install semgrep per https://github.com/returntocorp/semgrep#getting-started
 # for end-to-end tests and running Salus, install Docker per https://docs.docker.com/install
 ```
 

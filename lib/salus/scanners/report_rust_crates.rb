@@ -5,11 +5,16 @@ require 'salus/scanners/base'
 # create name, version and repository URL.
 #
 # The lock file (Cargo.lock) will be used if present.
+# The lock file (Cargo.lock) includes transitive dependencies.
 # If no lock file is present we will use cargo tree to analyze the
 # dependencies.  Cargo added tree support in version 1.44
 
 module Salus::Scanners
   class ReportRustCrates < Base
+    def self.scanner_type
+      Salus::ScannerTypes::SBOM_REPORT
+    end
+
     LOCK_FILE = 'Cargo.lock'.freeze
     MANIFEST_FILE = 'Cargo.toml'.freeze
 
@@ -26,6 +31,10 @@ module Salus::Scanners
       end
     end
 
+    def self.supported_languages
+      ['rust']
+    end
+
     private
 
     def with_lock_file
@@ -36,7 +45,7 @@ module Salus::Scanners
       # Cargo tree will generate the lock and return the list of dependencies
       # No point in coding two paths for dependencies so we'll just use
       # cargo tree's ability to generate the .lock file
-      run_shell("cargo tree --manifest-path #{manifest_path}") unless existing_lock
+      run_shell("cargo tree --manifest-path #{manifest_path}", chdir: nil) unless existing_lock
 
       yield
       # Cleanup after ourselves if we generated a lock file
@@ -68,10 +77,10 @@ module Salus::Scanners
       deps["package"].each do |package|
         report_dependency(
           LOCK_FILE,
-          type: LOCK_FILE.parameterize.underscore,
+          type: "cargo",
           name: package['name'],
           reference: package['source'],
-          version_tag: package['version']
+          version: package['version']
         )
       end
     end
