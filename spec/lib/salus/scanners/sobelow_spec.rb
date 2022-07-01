@@ -35,15 +35,6 @@ describe Salus::Scanners::Sobelow do
       scanner.run
       expect(scanner.report.to_h.fetch(:passed)).to eq(false)
     end
-
-    it 'should report an error if there were issues running sobelow' do
-      repo = Salus::Repo.new('spec/fixtures/sobelow/bad_mixfile') ## w
-      scanner = Salus::Scanners::Sobelow.new(repository: repo, config: {})
-
-      expect(scanner).to receive(:report_failure).and_call_original
-      scanner.run
-      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
-    end
   end
   
 end
