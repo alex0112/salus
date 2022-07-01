@@ -20,7 +20,7 @@ module Salus::Scanners
     end
 
     def run
-      #     Sobelow is a static analysis tool for discovering vulnerabilities in Phoenix
+      # Sobelow is a static analysis tool for discovering vulnerabilities in Phoenix
       # applications.
       
       # This tool should be run in the root of the project directory with the following
@@ -61,7 +61,7 @@ module Salus::Scanners
     end
 
     def command
-      'mix sobelow --skip --threshhold low --exit low'
+      'mix sobelow --skip --threshold low --exit low'
     end
 
     private
