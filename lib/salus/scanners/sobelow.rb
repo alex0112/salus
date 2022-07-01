@@ -48,12 +48,8 @@ module Salus::Scanners
     end
 
     def run
-      begin
-        shell_return = run_shell(command, chdir: @repository.path_to_repo)
-        handle_shell_output(shell_return)
-      rescue
-        report_error(shell_return.stderr + shell_return.stdout) ## Only report an error if an exception was thrown
-      end
+      shell_return = run_shell(command, chdir: @repository.path_to_repo)
+      handle_shell_output(shell_return)
     end
 
     def supported_languages
@@ -61,20 +57,23 @@ module Salus::Scanners
     end
 
     def command
-      'sobelow --skip --threshhold low --exit low' ## use 'sobelow' instead of 'mix sobelow', refers to the version installed in the docker image
+      'mix sobelow --skip --threshhold low --exit low'
     end
 
     private
     def handle_shell_output(shell_return)
-      ## The default banner is written to stderr, a write to stderr isn't 
+      ## Note: The default banner is written to stderr, a write to stderr isn't 
       ## a good indicator of actual failure.
 
-      if shell_return.success?
+      if shell_return.nil?
+        report_error
+        report_stderr("Sobelow unable to run")
+      elsif shell_return.success?
         report_success
       else
         report_failure ## Mark this scan as failed
-        report_stderr(shell_return.stderr) unless shell_return.nil? ## If we end up here it's fine to fail the scan
-        report_stdout(shell_return.stdout) unless shell_return.nil?
+        report_stderr(shell_return.stderr) ## If we end up here it's fine to fail the scan
+        report_stdout(shell_return.stdout)
 
         log(shell_return.stderr + shell_return.stdout) ## In the event of failure, log the output in its entirety
       end
