@@ -4,7 +4,6 @@ require 'json'
 
 module Salus::Scanners
   class Sobelow < Base
-
     include Salus::Formatting
 
     def self.scanner_type
@@ -12,7 +11,7 @@ module Salus::Scanners
     end
 
     def version
-      return '0.11.1' ## TODO: Currently sobelow does not support a --version flag, get this info somehow
+      '0.11.1' ## TODO: Currently sobelow does not support a --version flag, get this info somehow
     end
 
     def should_run?
@@ -22,7 +21,7 @@ module Salus::Scanners
     def run
       # Sobelow is a static analysis tool for discovering vulnerabilities in Phoenix
       # applications.
-      
+
       # This tool should be run in the root of the project directory with the following
       # command:
 
@@ -65,8 +64,9 @@ module Salus::Scanners
     end
 
     private
+
     def handle_shell_output(shell_return)
-      ## Note: The default banner is written to stderr, a write to stderr isn't 
+      ## Note: The default banner is written to stderr, a write to stderr isn't
       ## a good indicator of actual failure.
 
       if shell_return.nil?
@@ -79,7 +79,8 @@ module Salus::Scanners
         report_stderr(shell_return.stderr)
         report_stdout(shell_return.stdout)
 
-        log(shell_return.stderr + shell_return.stdout) ## In the event of failure, log the output in its entirety
+        ## In the event of failure, log the output in its entirety
+        log(shell_return.stderr + shell_return.stdout)
       end
     end
   end

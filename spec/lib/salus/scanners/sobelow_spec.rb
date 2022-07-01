@@ -36,5 +36,4 @@ describe Salus::Scanners::Sobelow do
       expect(scanner.report.to_h.fetch(:passed)).to eq(false)
     end
   end
-  
 end
