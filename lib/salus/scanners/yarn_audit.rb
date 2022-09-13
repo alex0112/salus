@@ -1,5 +1,7 @@
 require 'json'
 require 'salus/scanners/node_audit'
+require 'salus/semver'
+require 'salus/auto_fix/yarn_audit_v1'
 
 # Yarn Audit scanner integration. Flags known malicious or vulnerable
 # dependencies in javascript projects that are packaged with yarn.
@@ -7,14 +9,17 @@ require 'salus/scanners/node_audit'
 
 module Salus::Scanners
   class YarnAudit < NodeAudit
+    class SemVersion < Gem::Version; end
+    class ExportReportError < StandardError; end
     # the command was previously 'yarn audit --json', which had memory allocation issues
     # see https://github.com/yarnpkg/yarn/issues/7404
     LEGACY_YARN_AUDIT_COMMAND = 'yarn audit --no-color'.freeze
-    LATEST_YARN_AUDIT_ALL_COMMAND = 'yarn npm audit --all --json'.freeze
+    LATEST_YARN_AUDIT_ALL_COMMAND = 'yarn npm audit --json'.freeze
     LATEST_YARN_AUDIT_PROD_COMMAND = 'yarn npm audit --environment'\
                   ' production --json'.freeze
     YARN_VERSION_COMMAND = 'yarn --version'.freeze
     BREAKING_VERSION = "2.0.0".freeze
+    YARN_COMMAND = 'yarn'.freeze
 
     def should_run?
       @repository.yarn_lock_present?
@@ -25,6 +30,7 @@ module Salus::Scanners
     end
 
     def run
+      @vulns_w_paths = []
       if Gem::Version.new(version) >= Gem::Version.new(BREAKING_VERSION)
         handle_latest_yarn_audit
       else
@@ -77,6 +83,7 @@ module Salus::Scanners
                        })
         end
       end
+
       return report_success if vulns.empty?
 
       vulns = combine_vulns(vulns)
@@ -108,6 +115,8 @@ module Salus::Scanners
       # lines contain 1 or more vuln tables
 
       vulns = parse_output(table_lines)
+      @vulns_w_paths = deep_copy_wo_paths(vulns)
+      vulns.each { |vul| vul.delete('Path') }
       vuln_ids = vulns.map { |v| v['ID'] }
       report_info(:vulnerabilities, vuln_ids.uniq)
 
@@ -118,10 +127,48 @@ module Salus::Scanners
       chdir = File.expand_path(@repository&.path_to_repo)
 
       Salus::YarnLock.new(File.join(chdir, 'yarn.lock')).add_line_number(vulns)
+
+      auto_fix = @config.fetch("auto_fix", false)
+      if auto_fix
+        v1_autofixer = Salus::Autofix::YarnAuditV1.new(@repository.path_to_repo)
+        v1_autofixer.run_auto_fix(
+          generate_fix_feed,
+          @repository.path_to_repo,
+          @repository.package_json,
+          @repository.yarn_lock
+        )
+      end
+
       vulns = combine_vulns(vulns)
       log(format_vulns(vulns))
       report_stdout(vulns.to_json)
       report_failure
+    end
+
+    def generate_fix_feed
+      actions = []
+      grouped_vulns = @vulns_w_paths.group_by { |h| [h["Package"], h["Patched in"]] }
+      grouped_vulns.each do |key, values|
+        name = key.first
+        patch = key.last
+        resolves = []
+        values.each do |value|
+          resolves.append({
+                            "id": value["ID"],
+                  "path": value["Path"],
+                  "dev": false,
+                    "optional": false,
+                    "bundled": false
+                          })
+        end
+        actions.append({
+                         "action": "update",
+          "module": name,
+          "target": patch,
+          "resolves": resolves
+                       })
+      end
+      actions
     end
 
     def version
@@ -147,13 +194,10 @@ module Salus::Scanners
           line_split = lines[i].split("│")
           curr_key = line_split[1].strip
           val = line_split[2].strip
-
-          if curr_key != "" && curr_key != 'Path'
+          if curr_key != ""
             vuln[curr_key] = val
             prev_key = curr_key
-          elsif curr_key == 'Path'
-            prev_key = curr_key
-          elsif prev_key != 'Path'
+          else
             vuln[prev_key] += ' ' + val
           end
         elsif lines[i].start_with?("└─") && lines[i].end_with?("─┘")
@@ -184,6 +228,16 @@ module Salus::Scanners
       command << 'dependencies ' unless dep_types.include?('dependencies')
       command << 'devDependencies ' unless dep_types.include?('devDependencies')
       command << 'optionalDependencies ' unless dep_types.include?('optionalDependencies')
+    end
+
+    def find_nested_hash_value(obj, key)
+      if obj.respond_to?(:key?) && obj.key?(key)
+        obj[key]
+      elsif obj.respond_to?(:each)
+        r = nil
+        obj.find { |*a| r = find_nested_hash_value(a.last, key) }
+        r
+      end
     end
 
     # severity and vuln title in the yarn output looks like
@@ -227,9 +281,19 @@ module Salus::Scanners
 
       vulns = uniq_vulns.values
       vulns.each do |vul|
-        vul['Dependency of'] = vul['Dependency of'].sort.join(', ')
+        vul['Dependency of'] = vul['Dependency of'].uniq.sort.join(', ')
       end
       vulns
+    end
+
+    def deep_copy_wo_paths(vulns)
+      vuln_list = []
+      vulns.each do |vuln|
+        vt = {}
+        vuln.each { |k, v| vt[k] = v }
+        vuln_list.push vt
+      end
+      vuln_list
     end
 
     def format_vulns(vulns)

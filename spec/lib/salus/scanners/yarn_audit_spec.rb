@@ -81,17 +81,24 @@ describe Salus::Scanners::YarnAudit do
         expect(vul["ID"]).to be_kind_of(Integer)
       end
 
-      id_vuls = vulns.select { |v| v['ID'] == 1_067_329 }
+      id_vuls = vulns.select { |v| v['ID'] == 1_070_415 }
       expect(id_vuls.size).to eq(1)
       # vul has two merged dependdency of
-      expected_vul = { "Package" => "glob-parent",
-                      "Patched in" => ">=5.1.2",
-                      "Dependency of" => "chokidar, gulp",
-                      "More info" => "https://www.npmjs.com/advisories/1067329",
+      expected_vul = { "Package" => "nth-check",
+                      "Patched in" => ">=2.0.1",
+                      "Dependency of" => "rollup-plugin-postcss",
+                      "More info" => "https://www.npmjs.com/advisories/1070415",
                       "Severity" => "high",
-                      "Title" => "Regular expression denial of service in glob-parent",
-                      "ID" => 1_067_329 }
+                      "Title" => "Inefficient Regular Expression Complexity in nth-check",
+                      "ID" => 1_070_415 }
       expect(id_vuls[0]).to eq(expected_vul)
+
+      id_vuls_w_paths = scanner.instance_variable_get(:@vulns_w_paths)
+        .select { |v| v['ID'] == 1_070_415 }
+      expect(id_vuls.size).to eq(1)
+      expected_vul['Path'] = "rollup-plugin-postcss > cssnano > cssnano-preset-default > "\
+                             "postcss-svgo > svgo > css-select > nth-check"
+      expect(id_vuls_w_paths[0]).to eq(expected_vul)
 
       id_vuls = vulns.select { |v| v['ID'] == 1_067_342 }
       expect(id_vuls.size).to eq(1)
@@ -104,6 +111,12 @@ describe Salus::Scanners::YarnAudit do
                       "Title" => "Prototype Pollution in minimist",
                       "ID" => 1_067_342 }
       expect(id_vuls[0]).to eq(expected_vul)
+
+      id_vuls_w_paths = scanner.instance_variable_get(:@vulns_w_paths)
+        .select { |v| v['ID'] == 1_067_342 }
+      expect(id_vuls.size).to eq(1)
+      expected_vul['Path'] = "gulp-cssmin > gulp-util > minimist"
+      expect(id_vuls_w_paths[0]).to eq(expected_vul)
     end
 
     it 'should fail with error if there are errors' do
@@ -159,6 +172,174 @@ describe Salus::Scanners::YarnAudit do
       expect(scanner.report.to_h.fetch(:errors)).to include(
         message: "No dependencies were scanned!"
       )
+    end
+  end
+
+  describe '#autofix' do
+    it 'should not update if patched in major versions (direct deps only)' do
+      repo_path = 'spec/fixtures/yarn_audit/failure'
+      yarn_lock = File.join(repo_path, 'yarn.lock')
+      package_json = File.join(repo_path, 'package.json')
+      yarn_lock_fixed = File.join(repo_path, 'yarn-autofixed.lock')
+      package_json_fixed = File.join(repo_path, 'package-autofixed.json')
+      [yarn_lock_fixed, package_json_fixed].each do |f|
+        File.delete(f) if File.exist?(f)
+      end
+
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: { 'auto_fix' => true })
+      scanner.run
+
+      # all vuls are patched in major versions, so no updates
+      expect(File.exist?(yarn_lock_fixed)).to eq(true)
+      expect(File.exist?(package_json_fixed)).to eq(true)
+      expect(FileUtils.compare_file(yarn_lock, yarn_lock_fixed)).to eq(true)
+      package_json_content = JSON.parse(File.read(package_json))
+      package_json_fixed_content = JSON.parse(File.read(package_json_fixed))
+      expect(package_json_content).to eq(package_json_fixed_content)
+    end
+
+    it 'should update correctly if patched in both major/minor versions (direct deps only)' do
+      repo_path = 'spec/fixtures/yarn_audit/failure-2'
+      yarn_lock = File.join(repo_path, 'yarn.lock')
+      package_json = File.join(repo_path, 'package.json')
+      yarn_lock_fixed = File.join(repo_path, 'yarn-autofixed.lock')
+      package_json_fixed = File.join(repo_path, 'package-autofixed.json')
+      [yarn_lock_fixed, package_json_fixed].each do |f|
+        File.delete(f) if File.exist?(f)
+      end
+
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: { 'auto_fix' => true })
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["merge", ">=1.2.1"], ["merge", ">=2.1.1"],
+                                ["uglify-js", ">=2.4.24"],
+                                ["uglify-js", ">=2.6.0"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
+
+      # package.json has dependencies "merge": "^1.2.1"
+      # yarn audit says merge patched in >=2.1.1, another vul says merge patched in >=1.2.1
+      # expected new package.json updates merge to ^1.2.1
+      expect(File.exist?(yarn_lock_fixed)).to eq(true)
+      expect(File.exist?(package_json_fixed)).to eq(true)
+      expect(FileUtils.compare_file(yarn_lock, yarn_lock_fixed)).to eq(true)
+      package_json_content = JSON.parse(File.read(package_json))
+      package_json_content['dependencies']['merge'] = '^1.2.1'
+      package_json_fixed_content = JSON.parse(File.read(package_json_fixed))
+      expect(package_json_content).to eq(package_json_fixed_content)
+
+      # update package.json and run salus again, fixed deps will not appear in findings
+      FileUtils.cp(package_json_fixed, package_json)
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: {})
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["merge", ">=2.1.1"],
+                                ["uglify-js", ">=2.4.24"], ["uglify-js", ">=2.6.0"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
+    end
+
+    it 'should update multiple dependencies correctly with direct dependencies' do
+      repo_path = 'spec/fixtures/yarn_audit/failure-4'
+      yarn_lock = File.join(repo_path, 'yarn.lock')
+      package_json = File.join(repo_path, 'package.json')
+      yarn_lock_fixed = File.join(repo_path, 'yarn-autofixed.lock')
+      package_json_fixed = File.join(repo_path, 'package-autofixed.json')
+      [yarn_lock_fixed, package_json_fixed].each do |f|
+        File.delete(f) if File.exist?(f)
+      end
+
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: { 'auto_fix' => true })
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["dot-prop", ">=4.2.1"],
+                                ["lodash", ">=4.17.20"], ["lodash", ">=4.17.21"],
+                                ["uglify-js", ">=2.4.24"], ["uglify-js", ">=2.6.0"],
+                                ["yargs-parser", ">=13.1.2"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
+
+      # package.json has dependencies "lodash": "4.17.14"
+      #                               "dot-prop": "^4.2.0"
+      #                               "yargs-parser": "11.1.1
+      #                               "uglify-js": "1.2.3""
+      # yarn audit says lodash patched in >= 4.17.20 and >= 4.17.21
+      #                 dot-prop patched in >= 4.2.1
+      #                 yargs-parser patched in >= 13.1.2 (major version update)
+      #                 uglify-js patched in >= 2.6.0, 2.4.24 (major version update)
+      # expected new package.json updates lodash to 4.17.21 as max(4.17.20, 4.17.21)
+      #                                   dot-prop to 4.2.1
+      expect(File.exist?(yarn_lock_fixed)).to eq(true)
+      expect(File.exist?(package_json_fixed)).to eq(true)
+      expect(FileUtils.compare_file(yarn_lock, yarn_lock_fixed)).to eq(true)
+      package_json_content = JSON.parse(File.read(package_json))
+      package_json_content['dependencies']['lodash'] = '^4.17.21'
+      package_json_content['dependencies']['dot-prop'] = '^4.2.1'
+      package_json_fixed_content = JSON.parse(File.read(package_json_fixed))
+      expect(package_json_content).to eq(package_json_fixed_content)
+
+      # update package.json and run salus again, fixed deps will not appear in findings
+      FileUtils.cp(package_json_fixed, package_json)
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: {})
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["uglify-js", ">=2.4.24"], ["uglify-js", ">=2.6.0"],
+                                ["yargs-parser", ">=13.1.2"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
+    end
+
+    it 'should update indirect dependencies correct' do
+      repo_path = 'spec/fixtures/yarn_audit/failure-5'
+      yarn_lock = File.join(repo_path, 'yarn.lock')
+      package_json = File.join(repo_path, 'package.json')
+      yarn_lock_fixed = File.join(repo_path, 'yarn-autofixed.lock')
+      package_json_fixed = File.join(repo_path, 'package-autofixed.json')
+      [yarn_lock_fixed, package_json_fixed].each do |f|
+        File.delete(f) if File.exist?(f)
+      end
+
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: { 'auto_fix' => true })
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["node-sass", ">=7.0.0"], ["scss-tokenizer", ">=0.4.3"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
+
+      # package.json has only 1 dependency "node-sass": "6.0.1"
+      # yarn audit says node-sass patched >= 7.0.0
+      #                 scss-tokenizer patched >= 0.4.3
+      expect(File.exist?(yarn_lock_fixed)).to eq(true)
+      expect(File.exist?(package_json_fixed)).to eq(true)
+      # new yarn.lock has scss-tokenizer patched updated to ^0.4.3
+      expected_yarn_lock_fixed = File.join(repo_path, 'expected-yarn-autofixed.lock')
+      expect(FileUtils.compare_file(yarn_lock_fixed, expected_yarn_lock_fixed)).to eq(true)
+
+      package_json_content = JSON.parse(File.read(package_json))
+      package_json_fixed_content = JSON.parse(File.read(package_json_fixed))
+      expect(package_json_content).to eq(package_json_fixed_content)
+
+      # update yarn.lock and run salus again, scss-tokenizer will disappear from vuls
+      FileUtils.cp(yarn_lock_fixed, yarn_lock)
+      repo = Salus::Repo.new(repo_path)
+      scanner = Salus::Scanners::YarnAudit.new(repository: repo, config: {})
+      scanner.run
+      expect(scanner.report.to_h.fetch(:passed)).to eq(false)
+      vulns = JSON.parse(scanner.report.to_h[:info][:stdout])
+      vuln_packages = vulns.map { |v| [v['Package'], v['Patched in']] }.sort.uniq
+      expected_vuln_packages = [["node-sass", ">=7.0.0"]]
+      expect(vuln_packages).to eq(expected_vuln_packages)
     end
   end
 
