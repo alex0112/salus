@@ -165,6 +165,10 @@
         "pass_on_raise": false,
         "scanner_timeout_s": 0
       },
+      "Sobelo": {
+        "pass_on_raise": false,
+        "scanner_timeout_s": 0
+      },
       "YarnAudit": {
         "pass_on_raise": false,
         "scanner_timeout_s": 0
